@@ -5,33 +5,53 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
 <title>スマホ対応シューティング（仮想スティック / タップ開始&再開）</title>
 <style>
+  :root{
+    --maxW: 420px;
+  }
   body{
     margin:0;
     background:#000;
     color:#fff;
-    text-align:center;
     font-family:sans-serif;
     touch-action:none;
     -webkit-user-select:none;
     user-select:none;
     overscroll-behavior:none;
   }
-  h3{ margin:10px 0 6px; }
+
+  /* 画面全体を縦に収める（UIが下に隠れない） */
+  #wrap{
+    height: 100dvh; /* iOS/Androidのアドレスバー変動対策 */
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    justify-content:flex-start; /* 上詰め */
+    padding-top: 6px;
+    padding-bottom: calc(10px + env(safe-area-inset-bottom)); /* iPhoneホームバー対策 */
+    box-sizing:border-box;
+    gap: 6px;
+  }
+
+  h3{
+    margin: 4px 0 0;
+    font-size: 18px;
+  }
+
+  /* キャンバス：画面高さに合わせて縮小して必ず見えるようにする */
   canvas{
     background:#111;
     display:block;
-    margin:0 auto;
+    width: min(var(--maxW), 100vw);
+    height: auto; /* JSで高さを決めるのでOK */
     touch-action:none;
   }
-  #status{ margin:8px 0 6px; }
 
   #controls{
-    width:400px;
-    margin:0 auto;
+    width: min(var(--maxW), 100vw);
     display:flex;
     justify-content:space-between;
     align-items:center;
-    padding:8px 10px 14px;
+    padding: 6px 10px 0;
     box-sizing:border-box;
     gap:12px;
   }
@@ -39,22 +59,23 @@
   /* 仮想スティック */
   #stickArea{
     position:relative;
-    width:140px;
-    height:140px;
+    width:120px;
+    height:120px;
     border-radius:50%;
     background:rgba(255,255,255,0.08);
     border:1px solid rgba(255,255,255,0.18);
     overflow:hidden;
     touch-action:none;
+    flex:0 0 auto;
   }
   #stickKnob{
     position:absolute;
     left:50%;
     top:50%;
-    width:56px;
-    height:56px;
-    margin-left:-28px;
-    margin-top:-28px;
+    width:52px;
+    height:52px;
+    margin-left:-26px;
+    margin-top:-26px;
     border-radius:50%;
     background:rgba(255,255,255,0.25);
     border:1px solid rgba(255,255,255,0.25);
@@ -64,50 +85,90 @@
 
   #shotBtn{
     width:140px;
-    height:70px;
-    font-size:22px;
+    height:64px;
+    font-size:20px;
     border-radius:14px;
     border:1px solid rgba(255,255,255,0.25);
     background:rgba(255,255,255,0.10);
     color:#fff;
     touch-action:none;
+    flex:0 0 auto;
   }
   #shotBtn:active{ background:rgba(255,255,255,0.18); }
 
-  /* 狭い画面 */
-  @media (max-width: 420px){
-    canvas{ width: 100vw; height:auto; }
-    #controls{ width:100vw; }
-    #stickArea{ width:120px; height:120px; }
-    #shotBtn{ width:120px; height:64px; font-size:20px; }
+  #status{
+    margin: 2px 0 0;
+    font-size: 14px;
+    width: min(var(--maxW), 100vw);
+    text-align:center;
+    opacity:0.95;
   }
 </style>
 </head>
 <body>
 
-<h3>シューティングゲーム</h3>
-<canvas id="game" width="400" height="600"></canvas>
+<div id="wrap">
+  <h3>シューティングゲーム</h3>
+  <canvas id="game" width="400" height="600"></canvas>
 
-<div id="controls">
-  <div id="stickArea" aria-label="仮想スティック">
-    <div id="stickKnob"></div>
+  <div id="controls">
+    <div id="stickArea" aria-label="仮想スティック">
+      <div id="stickKnob"></div>
+    </div>
+    <button id="shotBtn">SHOT</button>
   </div>
-  <button id="shotBtn">SHOT</button>
-</div>
 
-<p id="status"></p>
+  <p id="status"></p>
+</div>
 
 <script>
 /* =========================
-   基本セット
+   レイアウト：画面に収まるよう canvas 高さを自動調整
+   - UIが下に隠れないよう、残り高さでキャンバスを縮める
 ========================= */
+const wrap = document.getElementById("wrap");
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
+const controls = document.getElementById("controls");
 const statusText = document.getElementById("status");
 const shotBtn = document.getElementById("shotBtn");
 const stickArea = document.getElementById("stickArea");
 const stickKnob = document.getElementById("stickKnob");
 
+const BASE_W = 400;
+const BASE_H = 600;
+
+function fitCanvas(){
+  // wrap内で「キャンバスに使える高さ」を計算
+  const wrapRect = wrap.getBoundingClientRect();
+  const controlsRect = controls.getBoundingClientRect();
+  const statusRect = statusText.getBoundingClientRect();
+
+  // タイトル(h3)はwrapのgap含めて大体吸収されるので、wrap内から残りを取る
+  const used = (controlsRect.height + statusRect.height + 24); // 微調整の余白
+  let availableH = wrapRect.height - used;
+
+  // キャンバスの表示幅（CSSのwidthに合わせる）
+  const displayW = Math.min(420, window.innerWidth);
+  const scaleByW = displayW / BASE_W;
+
+  // 高さが足りない場合は高さ基準で縮小
+  let displayH = BASE_H * scaleByW;
+  if (displayH > availableH){
+    const scaleByH = availableH / BASE_H;
+    displayH = BASE_H * scaleByH;
+    canvas.style.width = (BASE_W * scaleByH) + "px";
+  } else {
+    canvas.style.width = displayW + "px";
+  }
+  canvas.style.height = displayH + "px";
+}
+window.addEventListener("resize", fitCanvas);
+window.addEventListener("orientationchange", fitCanvas);
+
+/* =========================
+   ゲーム変数
+========================= */
 let score, lives, level, playerLevel;
 let bullets, enemies;
 let enemyTimer, gameOver;
@@ -118,26 +179,25 @@ let boss = null;
 const BOSS_HP = 30;
 let player;
 
-/* 追加：スタート待ち */
-let isRunning = false;     // false=スタート待ち（停止）, true=ゲーム進行
-let showStartText = true;  // 文字表示制御
+let isRunning = false;
+let showStartText = true;
 
 /* =========================
-   入力（PCキーボード）
+   入力（PC）
 ========================= */
 const keys = {};
 document.addEventListener("keydown", e => keys[e.code] = true);
 document.addEventListener("keyup", e => keys[e.code] = false);
 
 /* =========================
-   仮想スティック（Pointer Events）
+   仮想スティック
 ========================= */
 let stickActive = false;
 let stickPointerId = null;
 let stickCenter = { x: 0, y: 0 };
-let moveAxis = 0;        // -1（左）〜 +1（右）
-const STICK_MAX = 42;    // ノブ最大半径(px)
-const DEAD_ZONE = 0.10;  // 遊び
+let moveAxis = 0;
+const STICK_MAX = 38;
+const DEAD_ZONE = 0.10;
 
 function updateStickCenter(){
   const r = stickArea.getBoundingClientRect();
@@ -147,9 +207,7 @@ function updateStickCenter(){
 window.addEventListener("resize", updateStickCenter);
 window.addEventListener("scroll", updateStickCenter, { passive:true });
 
-function setKnob(dx, dy){
-  stickKnob.style.transform = `translate(${dx}px, ${dy}px)`;
-}
+function setKnob(dx, dy){ stickKnob.style.transform = `translate(${dx}px, ${dy}px)`; }
 function clamp(v, min, max){ return Math.max(min, Math.min(max, v)); }
 
 stickArea.addEventListener("pointerdown", (e) => {
@@ -195,14 +253,14 @@ function endStick(e){
 }
 
 /* =========================
-   ショット（長押し連射対応）
+   ショット（長押し連射）
 ========================= */
 let shotHeld = false;
 let shotCooldown = 0;
 const SHOT_INTERVAL = 8;
 
 function fireOnce(){
-  if (!isRunning) return;          // ★スタート前は撃てない
+  if (!isRunning) return;
   if (bullets.length >= 8) return;
 
   if (playerLevel >= 2) {
@@ -230,46 +288,29 @@ function handleSpaceShot(){
 }
 
 /* =========================
-   タップでスタート / リスタート
-   - 画面どこでもタップでOK
-   - ただしスティックやSHOT操作のタップは除外
+   タップで開始 / リスタート
+   - UI操作（スティック/SHOT）では発火しない
 ========================= */
+function isTapOnControls(target){
+  return target === shotBtn || stickArea.contains(target) || target === stickArea;
+}
 function startGame(){
   if (gameOver) return;
   isRunning = true;
   showStartText = false;
 }
-
 function restartGame(){
   init();
   isRunning = true;
   showStartText = false;
 }
-
-function isTapOnControls(target){
-  return target === shotBtn || stickArea.contains(target) || target === stickArea;
-}
-
 function handleScreenTap(e){
-  // UI（スティック/ボタン）操作はゲーム開始トリガーにしない
   if (isTapOnControls(e.target)) return;
-
-  if (gameOver) {
-    restartGame();
-  } else if (!isRunning) {
-    startGame();
-  }
+  if (gameOver) restartGame();
+  else if (!isRunning) startGame();
 }
-
-canvas.addEventListener("pointerdown", (e) => {
-  // キャンバスをタップ → 開始/再開（ただしスティック操作と被らない）
-  handleScreenTap(e);
-}, { passive:true });
-
-// 念のため body 全体でも拾う（見出し・余白タップ対応）
-document.body.addEventListener("pointerdown", (e) => {
-  handleScreenTap(e);
-}, { passive:true });
+canvas.addEventListener("pointerdown", handleScreenTap, { passive:true });
+document.body.addEventListener("pointerdown", handleScreenTap, { passive:true });
 
 /* =========================
    ゲーム本体
@@ -282,24 +323,22 @@ function init() {
 
   bullets = [];
   enemies = [];
-
   enemyTimer = 0;
-  gameOver = false;
 
+  gameOver = false;
   invincible = false;
   invincibleTimer = 0;
   blinkTimer = 0;
 
   boss = null;
-
   player = { x: 180, y: 520, w: 40, h: 40, speed: 5 };
 
-  // ★初期はスタート待ち
   isRunning = false;
   showStartText = true;
 
-  updateStickCenter();
   updateStatus();
+  updateStickCenter();
+  fitCanvas();
 }
 
 function updateStatus() {
@@ -319,15 +358,13 @@ function damage(){
   blinkTimer = 0;
   if (lives <= 0){
     gameOver = true;
-    isRunning = false;       // ★ゲーム停止
+    isRunning = false;
   }
 }
 
 function update(){
-  if (!isRunning) return; // ★スタート待ち or ゲームオーバー中は止める
-  if (gameOver) return;
+  if (!isRunning || gameOver) return;
 
-  // 無敵
   if (invincible){
     invincibleTimer--;
     blinkTimer++;
@@ -337,7 +374,6 @@ function update(){
     }
   }
 
-  // 移動：キーボード or スティック
   let vx = 0;
   if (keys.ArrowLeft) vx -= 1;
   if (keys.ArrowRight) vx += 1;
@@ -345,28 +381,20 @@ function update(){
 
   const speed = player.speed * Math.abs(vx);
   if (vx < 0 && player.x > 0) player.x -= speed;
-  if (vx > 0 && player.x < canvas.width - player.w) player.x += speed;
+  if (vx > 0 && player.x < BASE_W - player.w) player.x += speed;
 
-  // 発射
   handleSpaceShot();
 
-  // 長押し連射
   if (shotHeld){
     if (shotCooldown <= 0){
       fireOnce();
       shotCooldown = SHOT_INTERVAL;
-    } else {
-      shotCooldown--;
-    }
-  } else {
-    shotCooldown = 0;
-  }
+    } else shotCooldown--;
+  } else shotCooldown = 0;
 
-  // 弾
   bullets.forEach(b => b.y -= 7);
   bullets = bullets.filter(b => b.y > 0);
 
-  // 敵生成
   if (!boss){
     enemyTimer++;
     if (enemyTimer > Math.max(15, 40 - level * 3)){
@@ -380,20 +408,16 @@ function update(){
     }
   }
 
-  // 敵移動
   enemies.forEach(e => e.y += e.speed);
 
-  // ボス出現（50点ごと）
   if (!boss && score > 0 && score % 50 === 0){
     boss = { x: 100, y: 60, w: 200, h: 60, hp: BOSS_HP };
     enemies = [];
   }
 
-  // 弾ヒット
   for (let bi = bullets.length - 1; bi >= 0; bi--){
     const b = bullets[bi];
 
-    // 通常敵
     for (let ei = enemies.length - 1; ei >= 0; ei--){
       const e = enemies[ei];
       if (hit(b, 4, 10, e)){
@@ -405,7 +429,6 @@ function update(){
       }
     }
 
-    // ボス
     if (boss && bi < bullets.length){
       if (hit(b, 4, 10, boss)){
         bullets.splice(bi, 1);
@@ -418,7 +441,6 @@ function update(){
     }
   }
 
-  // 被弾
   if (!invincible){
     for (let ei = enemies.length - 1; ei >= 0; ei--){
       const e = enemies[ei];
@@ -434,23 +456,19 @@ function update(){
 }
 
 function draw(){
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.clearRect(0, 0, BASE_W, BASE_H);
 
-  // 自機
   if (!invincible || blinkTimer % 10 < 5){
     ctx.fillStyle = "cyan";
     ctx.fillRect(player.x, player.y, player.w, player.h);
   }
 
-  // 弾
   ctx.fillStyle = "yellow";
   bullets.forEach(b => ctx.fillRect(b.x, b.y, 4, 10));
 
-  // 敵
   ctx.fillStyle = "red";
   enemies.forEach(e => ctx.fillRect(e.x, e.y, e.w, e.h));
 
-  // ボス + HPバー
   if (boss){
     ctx.fillStyle = "purple";
     ctx.fillRect(boss.x, boss.y, boss.w, boss.h);
@@ -464,7 +482,6 @@ function draw(){
     ctx.strokeRect(barX, barY, barWidth, barHeight);
   }
 
-  // ★開始案内
   if (showStartText && !gameOver){
     ctx.fillStyle = "white";
     ctx.font = "22px sans-serif";
@@ -473,7 +490,6 @@ function draw(){
     ctx.fillText("左：スティック / 右：SHOT", 112, 338);
   }
 
-  // ★ゲームオーバー案内
   if (gameOver){
     ctx.fillStyle = "white";
     ctx.font = "30px sans-serif";
